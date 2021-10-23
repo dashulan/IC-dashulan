@@ -1,21 +1,20 @@
-from itertools import accumulate
-from os import access
+import argparse
 import time
 import numpy as np
 from typing import OrderedDict
-from numpy import mat, mod
-from numpy.lib import utils
 import torch
 from torch import cuda
-from torch._C import device, parse_schema
+from  typing import  OrderedDict
+from torch._C import device
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import dataset
 from torch.utils.data.dataloader import DataLoader
+from copy import  deepcopy
 
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
+old_model = None
 class MLP(nn.Module):
     def __init__(self,n_hidden,n_outputs=10):
         super(MLP,self).__init__()
@@ -35,6 +34,28 @@ class MLP(nn.Module):
         x = self.fc1(x)
         return x
 
+# tempture
+def cross_entropy(outputs,targets,exp=1.0,size_average=True,eps=1e-5):
+    out = torch.nn.functional.softmax(outputs,dim=0)
+    tar = torch.nn.functional.softmax(targets,dim=0)
+    if exp != 1:
+        out = out.pow(exp)
+        out = out/out.sum(1).view(-1,1).expand_as(out)
+        tar = tar.pow(exp)
+        tar = tar/tar.sum(1).view(-1,1).expand_as(tar)
+    out = out+eps/out.size(1)
+    out = out/out.sum(1).view(-1,1).expand_as(out)
+    ce = -(tar*out.log()).sum(1)
+    if size_average:
+        ce = ce.mean()
+    return ce
+
+def criterion_my(outputs,targets,outputs_old=None):
+    T=2
+    loss=0
+    loss+=1*cross_entropy(outputs,outputs_old,exp=1.0/T)
+    return loss+torch.nn.functional.cross_entropy(outputs,targets)
+
 def train(model,trn_loader,optim,criterion):
     model.train()
     
@@ -47,20 +68,23 @@ def train(model,trn_loader,optim,criterion):
         optim.zero_grad()
         loss.backward()
         optim.step()
-def train_projected(model,trn_loader,optim,criterion,proj_mat):
+def train_projected(model,trn_loader,optim,criterion,proj_mat,old_model):
     model.train()
+    old_model.eval()
     
     for batch,(data,target) in enumerate(trn_loader):
         data=data.view(-1,28*28)
         data,target = data.to(device),target.to(device)
+        outputs_old= old_model(data)
         outputs = model(data)
-        loss  =criterion(outputs,target)
+        # loss  = criterion_my(outputs,target,outputs_old)
+        loss = criterion(outputs,target)
 
         optim.zero_grad()
         loss.backward()
-        for  k,(m,params) in enumerate(model.named_parameters()):
-            sz = params.grad.data.size(0)
-            params.grad.data = params.grad.data - torch.mm(params.grad.data.view(sz,-1),proj_mat[k]).view(params.size())
+        # for  k,(m,params) in enumerate(model.named_parameters()):
+        #     sz = params.grad.data.size(0)
+        #     params.grad.data = params.grad.data - torch.mm(params.grad.data.view(sz,-1),proj_mat[k]).view(params.size())
         optim.step()
 
 def eval(model,test_loader,optim,criterion):
@@ -121,8 +145,8 @@ def update_GPM(threshold,mat_list,feature_list=[]):
             activation = mat_list[i]
             U1,S1,vh1 = np.linalg.svd(activation,full_matrices=False)
             sval_total = (S1**2).sum()
-            # 这一步  是矩阵投影到矩阵？
-            # 通过投影 去除了共同和之前任务的共同基
+
+
             act_hat = activation - np.dot(np.dot(feature_list[i],feature_list[i].transpose()),activation)
             U,S,Vh = np.linalg.svd(act_hat,full_matrices=False)
             
@@ -131,7 +155,7 @@ def update_GPM(threshold,mat_list,feature_list=[]):
             accumulated_sval = (sval_total-sval_hat)/sval_total
             
             r = 0
-            #这段不太懂
+
             for ii in range(sval_ration.shape[0]):
                 if accumulated_sval<threshold[i]:
                     accumulated_sval+=sval_ration[ii]
@@ -152,7 +176,7 @@ def update_GPM(threshold,mat_list,feature_list=[]):
 
 
 
-def main():
+def main(args):
     
     from utils import pmnist_dataset
     Pminst,taskcla,input_shape  = pmnist_dataset.get(42,pc_valid=0.1)
@@ -164,7 +188,7 @@ def main():
     task_list= []
     testloaders=[]
     tasklist=[]
-    
+
     
     feature_list = []
     acc_matrix=np.zeros((10,10))
@@ -184,12 +208,12 @@ def main():
 
         if k==0: 
             print('-'*40)
-            for epoch in range(1,1+1):
+            for epoch in range(1,args.n_epochs+1):
                 clock0=time.time()
                 train(model,trn_loader,optim,criterion)
                 clock1 = time.time()
-                tr_loss,tr_acc = eval(model,trn_loader,optim,criterion)
-                print(f"Epoch {epoch} | train:loss={tr_loss:.3f}, acc={tr_acc:.5f}% | time={1000*(clock1-clock0):5.1f} |",end='')
+                # tr_loss,tr_acc = eval(model,trn_loader,optim,criterion)
+                print(f"Epoch {epoch} | train:loss={0:.3f}, acc={0:.5f}% | time={1000*(clock1-clock0):5.1f} |",end='')
 
                 valid_loss,valid_acc = eval(model,val_loader,optim,criterion)
                 print(f"valid:loss={valid_loss:.3f}, acc={valid_acc:.5f}% |",end='')
@@ -199,21 +223,22 @@ def main():
             test_loss,test_acc = eval(model,test_loader,optim,criterion)
             print(f"Test:loss={test_loss:.3f},acc={test_acc:.5f}%")
 
-            mat_list = get_representation_matrix(model,trn_loader)
-            feature_list = update_GPM(threshold,mat_list,feature_list)
+            old_model = deepcopy(model)
+            # mat_list = get_representation_matrix(model,trn_loader)
+            # feature_list = update_GPM(threshold,mat_list,feature_list)
         else:
             projection_mat = []
-            for i in range(len(model.act)):
-                Up = torch.Tensor(np.dot(feature_list[i],feature_list[i].transpose())).to(device)
-                projection_mat.append(Up)
+            # for i in range(len(model.act)):
+            #     Up = torch.Tensor(np.dot(feature_list[i],feature_list[i].transpose())).to(device)
+            #     projection_mat.append(Up)
             print('-'*40)
-            for epoch in range(1,1+1):
+            for epoch in range(1,args.n_epochs+1):
                 clock0=time.time()
                 # train(model,trn_loader,optim,criterion)
-                train_projected(model,trn_loader,optim,criterion,projection_mat )
+                train_projected(model,trn_loader,optim,criterion,projection_mat,old_model)
                 clock1 = time.time()
-                tr_loss,tr_acc = eval(model,trn_loader,optim,criterion)
-                print(f"Epoch {epoch} | train:loss={tr_loss:.3f}, acc={tr_acc:.5f}% | time={1000*(clock1-clock0):5.1f} |",end='')
+                # tr_loss,tr_acc = eval(model,trn_loader,optim,criterion)
+                print(f"Epoch {epoch} | train:loss={0:.3f}, acc={0:.5f}% | time={1000*(clock1-clock0):5.1f} |",end='')
 
                 valid_loss,valid_acc = eval(model,val_loader,optim,criterion)
                 print(f"valid:loss={valid_loss:.3f}, acc={valid_acc:.5f}% |",end='')
@@ -223,8 +248,9 @@ def main():
             test_loss,test_acc = eval(model,test_loader,optim,criterion)
             print(f"Test:loss={test_loss:.3f},acc={test_acc:.5f}%")
 
-            mat_list = get_representation_matrix(model,trn_loader)
-            feature_list = update_GPM(threshold,mat_list,feature_list)
+            old_model = deepcopy(model)
+            # mat_list = get_representation_matrix(model,trn_loader)
+            # feature_list = update_GPM(threshold,mat_list,feature_list)
             
 
 
@@ -237,4 +263,9 @@ def main():
         
 
 if __name__=="__main__":
-    main() 
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('--n_epochs', type=int, default=10, metavar='N',
+                        help='number of training epochs/task (default: 5)')
+    args = parser.parse_args()
+    main(args)
