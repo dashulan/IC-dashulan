@@ -14,7 +14,7 @@ from copy import  deepcopy
 
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-old_model = None
+
 class MLP(nn.Module):
     def __init__(self,n_hidden,n_outputs=10):
         super(MLP,self).__init__()
