@@ -35,27 +35,6 @@ class MLP(nn.Module):
         return x
 
 # tempture
-def cross_entropy(outputs,targets,exp=1.0,size_average=True,eps=1e-5):
-    out = torch.nn.functional.softmax(outputs,dim=1)
-    tar = torch.nn.functional.softmax(targets,dim=1)
-    if exp != 1:
-        out = out.pow(exp)
-        out = out/out.sum(1).view(-1,1).expand_as(out)
-        tar = tar.pow(exp)
-        tar = tar/tar.sum(1).view(-1,1).expand_as(tar)
-    out = out+eps/out.size(1)
-    out = out/out.sum(1).view(-1,1).expand_as(out)
-    ce = -(tar*out.log()).sum(1)
-    if size_average:
-        ce = ce.mean()
-    return ce
-
-def criterion_my(outputs,targets,outputs_old=None):
-    T=2
-    loss=0
-    loss+=1*cross_entropy(outputs,outputs_old,exp=1.0/T)
-    return loss+torch.nn.functional.cross_entropy(outputs,targets)
-
 def train(model,trn_loader,optim,criterion):
     model.train()
     
@@ -173,9 +152,18 @@ def update_GPM(threshold,mat_list,feature_list=[]):
                 feature_list[i] = Ui
     return feature_list
             
-
-
-
+def displayParams(modelA,modelB):
+    for k,(m1,m2) in enumerate(zip(modelA.named_parameters(),modelB.named_parameters())):
+        m1_name,m1_p = m1
+        m2_name,m2_p=m2
+        a = m1_p.detach().numpy()
+        b = m2_p.detach().numpy()
+        c = np.concatenate((a.T,b.T),axis=1)
+        print(c.shape)
+        U,S,Vh=  np.linalg.svd(c,full_matrices=False)
+        d = U[:,:a.shape[0]]
+        d=d.T
+        print(np.linalg.norm(a,ord=2),np.linalg.norm(b,ord=2),np.linalg.norm(d,ord=2))
 def main(args):
     
     from utils import pmnist_dataset
@@ -192,7 +180,7 @@ def main(args):
     
     feature_list = []
     acc_matrix=np.zeros((10,10))
-
+    modelA,modelB = None,None
     for k,ncla in taskcla:
         trn_dataset = dataset.TensorDataset(Pminst[k]['train']['x'],Pminst[k]['train']['y'])
         test_dataset = dataset.TensorDataset(Pminst[k]['test']['x'],Pminst[k]['test']['y'])
@@ -223,19 +211,14 @@ def main(args):
             test_loss,test_acc = eval(model,test_loader,optim,criterion)
             print(f"Test:loss={test_loss:.3f},acc={test_acc:.5f}%")
 
-            old_model = deepcopy(model)
-            mat_list = get_representation_matrix(model,trn_loader)
-            feature_list = update_GPM(threshold,mat_list,feature_list)
+            modelA = deepcopy(model)
+            # mat_list = get_representation_matrix(model,trn_loader)
+            # feature_list = update_GPM(threshold,mat_list,feature_list)
         else:
-            projection_mat = []
-            for i in range(len(model.act)):
-                Up = torch.Tensor(np.dot(feature_list[i],feature_list[i].transpose())).to(device)
-                projection_mat.append(Up)
-            print('-'*40)
             for epoch in range(1,args.n_epochs+1):
                 clock0=time.time()
-                # train(model,trn_loader,optim,criterion)
-                train_projected(model,trn_loader,optim,criterion,projection_mat,old_model)
+                train(model,trn_loader,optim,criterion)
+                # train_projected(model,trn_loader,optim,criterion,projection_mat,old_model)
                 clock1 = time.time()
                 # tr_loss,tr_acc = eval(model,trn_loader,optim,criterion)
                 print(f"Epoch {epoch} | train:loss={0:.3f}, acc={0:.5f}% | time={1000*(clock1-clock0):5.1f} |",end='')
@@ -248,15 +231,16 @@ def main(args):
             test_loss,test_acc = eval(model,test_loader,optim,criterion)
             print(f"Test:loss={test_loss:.3f},acc={test_acc:.5f}%")
 
-            old_model = deepcopy(model)
-            mat_list = get_representation_matrix(model,trn_loader)
-            feature_list = update_GPM(threshold,mat_list,feature_list)
+            modelB = deepcopy(model)
+            # mat_list = get_representation_matrix(model,trn_loader)
+            # feature_list = update_GPM(threshold,mat_list,feature_list)
+            break
             
 
-
-        for tk,tl in zip(tasklist,testloaders):
-            _,acc_matrix[k][tk] = eval(model,tl,optim,criterion)
-        print(acc_matrix)
+    displayParams(modelA,modelB)
+        # for tk,tl in zip(tasklist,testloaders):
+        #     _,acc_matrix[k][tk] = eval(model,tl,optim,criterion)
+        # print(acc_matrix)
             
 
 
