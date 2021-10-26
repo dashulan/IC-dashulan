@@ -163,7 +163,9 @@ def displayParams(modelA,modelB):
         U,S,Vh=  np.linalg.svd(c,full_matrices=False)
         d = U[:,:a.shape[0]]
         d=d.T
-        print(np.linalg.norm(a,ord=2),np.linalg.norm(b,ord=2),np.linalg.norm(d,ord=2))
+        m1_p.data =torch.tensor(d).to(device)
+        m2_p.data=torch.tensor(d).to(device)
+        print(np.linalg.norm(a,'fro'),np.linalg.norm(b,'fro'),np.linalg.norm(d,'fro'))
 def main(args):
     
     from utils import pmnist_dataset
@@ -249,7 +251,7 @@ def main(args):
 if __name__=="__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--n_epochs', type=int, default=10, metavar='N',
+    parser.add_argument('--n_epochs', type=int, default=1, metavar='N',
                         help='number of training epochs/task (default: 5)')
     args = parser.parse_args()
     main(args)
