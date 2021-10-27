@@ -1,6 +1,8 @@
 from typing_extensions import TypeGuard
+import torch
 from torch.utils.data import DataLoader, dataset
 from typing import DefaultDict
+from torch.utils.data import TensorDataset
 import numpy as np
 
 from torch.utils.data.sampler import BatchSampler
@@ -34,6 +36,7 @@ class ClientsGroup(object):
         self.dataset_name = datasetName
         self.clientsNum = numOfClients
         self.clients_set = {}
+        self.device = None
 
     def datasetBalanceAllocation(self):
         mnistDataset = None
@@ -51,3 +54,8 @@ class ClientsGroup(object):
             data_shareds2 = train_data[shared_id2*shared_size:shared_id2*shared_size+shared_size]
             label_shareds1 = train_label[shared_id1*shared_size:shared_id1*shared_size+shared_size]
             label_shareds2 = train_label[shared_id2*shared_size:shared_id2*shared_size+shared_size]
+
+            local_data,local_label = np.vstack((data_shareds1,data_shareds2)),np.vstack((label_shareds1,label_shareds2))
+            someone = client(TensorDataset(torch.tensor(local_data),torch.tensor(local_label)),self.device)
+            self.clients_set[f'client{i}'] = someone
+        

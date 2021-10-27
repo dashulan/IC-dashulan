@@ -7,4 +7,7 @@ gobal_parameters = net.state_dict()
 gobal_parameters
 for k,v in gobal_parameters.items():
     print(v)
+
+
+num_comm = 1000
 # %%
