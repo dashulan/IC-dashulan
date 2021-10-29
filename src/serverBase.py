@@ -251,12 +251,11 @@ class ClientBase:
                 preds = model(data)
                 loss = lossFun(preds, label)
                 loss.backward()
-                if proj_mat is None:
-                    optim.step()
-                else:
+                if proj_mat:
                     for  k,(m,params) in enumerate(model.named_parameters()):
                         sz = params.grad.data.size(0)
                         params.grad.data = params.grad.data - torch.mm(params.grad.data.view(sz,-1),proj_mat[k]).view(params.size())
+                optim.step()
                 optim.zero_grad()
 
         return model.state_dict()
