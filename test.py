@@ -46,4 +46,26 @@ x = np.setdiff1d(x,x2)
 import torch
 preds = torch.tensor([1,2,0])
 labels =torch.tensor([1,2,5])
-(preds==labels).sum().item()
+# (preds==labels).sum().item()
+preds.copy_(labels)
+labels[1]=66
+preds
+
+# %%
+x = torch.tensor([1.0],requires_grad=True)
+x1 = x.detach()
+x2 = x.clone()
+x3 = x.data
+x4 = torch.tensor([1.0])
+x4.copy_(x)
+y = x**2
+y.backward()
+x1,x2,x3,x4,
+# %%
+x4.add_(1)
+z= x4**3
+z.backward()
+x.grad
+# %%
+[1]*3
+
