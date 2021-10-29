@@ -1,5 +1,6 @@
 import torch
 from torch._C import Decl
+from torch.cuda import init
 
 from clients import ClientsGroup
 from networks.MLP import MLP
@@ -26,26 +27,32 @@ for key,var in model.state_dict().items():
 
 sum_parameters = None
 
-for i in range(100):
 
-    clients_in_comm = []
-    for client in tqdm(clients_in_comm):
-        local_parameters = myClients.clients_set[client].localUpdate(5,10,model,loss_func,opti,global_parameters)
+class Server:
+    def __init__(self) -> None:
+        pass
 
-        if sum_parameters is None:
-            sum_parameters = {}    
-            for key,var in local_parameters.item():
-                sum_parameters[key] = var.clone()
-        else:
-            for var in sum_parameters:
-                sum_parameters[var] 
+    def train_clients(self):
+        tasks = 10
+        rounds = 10
+        for t in range(tasks):
+            for i in range(rounds):
 
-    for var in global_parameters:
-        global_parameters[var] = (sum_parameters[var]/num_in_comm)
+                clients_in_comm = []
+                for client in tqdm(clients_in_comm):
+
+                    local_parameters = myClients.clients_set[client].localUpdate(5,10,model,loss_func,opti,global_parameters)
+
+                    if sum_parameters is None:
+                        sum_parameters = {}    
+                        for key,var in local_parameters.item():
+                            sum_parameters[key] = var.clone()
+                    else:
+                        for var in sum_parameters:
+                            sum_parameters[var] 
+
+                for var in global_parameters:
+                    global_parameters[var] = (sum_parameters[var]/num_in_comm)
     
-    with torch.no_grad():
-        model.load_state_dict(global_parameters,strict=True)
-        sum_accu= 0
-        num=0
-        for data,label in testDataLoader:
-            data,label = data.to(device),label.to(device)
+    
+                    
