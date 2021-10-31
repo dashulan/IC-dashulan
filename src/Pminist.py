@@ -92,7 +92,7 @@ def eval(model,test_loader,optim,criterion):
     return test_loss,correct
 
 def get_representation_matrix(model,trn_loader):
-    r = np.arange(len(trn_loader.dataset))
+    r = np.arange(len(trn_loader.dataset)) 
     np.random.shuffle(r)
     r = torch.LongTensor(r).to(device)
     b = r[:300]

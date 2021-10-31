@@ -1,7 +1,9 @@
 import torch
+import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import OrderedDict
+
 
 class MLP(nn.Module):
     def __init__(self,n_hidden,n_outputs=10):
@@ -21,3 +23,25 @@ class MLP(nn.Module):
         self.act['fc1']=x
         x = self.fc1(x)
         return x
+    
+    def get_representation_matrix(self,device, train_dataset): 
+        r = np.arange(len(train_dataset)) 
+        np.random.shuffle(r)
+        r = torch.LongTensor(r).to(device)
+        size = min(len(train_dataset),300)
+        b = r[:size]
+        example_data = train_dataset[b][0].view(-1,28*28)
+        example_data = example_data.to(device)
+        example_out = self.forward(example_data)
+        
+        batch_list=[size]*3
+        mat_list = []
+        act_key = list(self.act.keys())
+        
+        for i in range(len(act_key)):
+            bsz = batch_list[i]
+            act = self.act[act_key[i]].detach().cpu().numpy()
+            activation = act[0:bsz].transpose()
+            mat_list.append(activation)
+            
+        return mat_list

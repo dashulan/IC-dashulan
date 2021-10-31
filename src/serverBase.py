@@ -6,9 +6,11 @@ from torch import optim
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data import TensorDataset
 from networks.MLP import MLP
+from networks.resnet18 import ResNet, ResNet18
 from utils import pmnist_dataset
 from typing import List
 from torch.optim import SGD
+from datasets import cifar100
 
 
 class ServerBase:
@@ -17,23 +19,33 @@ class ServerBase:
         self.clients: List[ClientBase] = []
         self.TaskNum = 10
         self.alldata = None
-        self.model:MLP = MLP(200)
+        self.taskCla = []
+        # self.model:MLP = MLP(200)
+        self.model:ResNet18 = None
+
+        
         self.global_parameters ={}
         self.loss_func= torch.nn.CrossEntropyLoss()
-        self.opti = SGD(self.model.parameters(),lr=0.1)
+        self.opti = None
         self.sum_parameters = None
+
         self.testDataset = None
         self.currentTask = None
+
         self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-        self.model.to(self.device)
+        
         self.proj = None
         self.feature_list =[]
-        self.threshold = np.array([0.95,0.99,0.99])
+
+        # self.threshold = np.array([0.95,0.99,0.99])
+
+        self.threshold = np.array([0.965] * 20)
 
 
     def run(self):
         self.init_clients()
         self.init_data()
+        self.initModel()
         self.init_global_weights()
         self.train_clients()
 
@@ -46,7 +58,7 @@ class ServerBase:
                 self.sum_parameters = None
                 for client in self.clients:
 
-                    local_parameters = client.localUpdate(5,10,self.model,self.loss_func,self.opti,self.global_parameters,self.proj)
+                    local_parameters = client.localUpdate(1,64,self.model,self.loss_func,self.opti,self.global_parameters,self.proj,tid)
 
                     if self.sum_parameters is None:
                         self.sum_parameters = {}
@@ -79,9 +91,14 @@ class ServerBase:
     
     def calculateProj(self):
         projection_mat = []
-        for i in range(len(self.model.act)):
-            Up = torch.Tensor(np.dot(self.feature_list[i],self.feature_list[i].transpose())).to(self.device)
-            projection_mat.append(Up)
+        # for i in range(len(self.model.act)):
+        #     Up = torch.Tensor(np.dot(self.feature_list[i],self.feature_list[i].transpose())).to(self.device)
+        #     projection_mat.append(Up)
+                    # # Projection Matrix Precomputation
+        for i in range(len(self.feature_list)):
+            Uf=torch.Tensor(np.dot(self.feature_list[i],self.feature_list[i].transpose())).to(self.device)
+            print('Layer {} - Projection Matrix shape: {}'.format(i+1,Uf.shape))
+            projection_mat.append(Uf)
         return projection_mat
 
     def getReprMatrix(self):
@@ -89,10 +106,10 @@ class ServerBase:
         for idx,client in enumerate(self.clients):
             temp_matrix.append(client.get_representation_matrix(self.model,self.global_parameters))
         repr_matrix = []
-        for i in range(3):
+        for j in range(len(temp_matrix[0])):
             temp = []
-            for j in range(len(temp_matrix)):
-                temp.append(temp_matrix[j][i])
+            for i in range(3):
+                temp.append(temp_matrix[i][j])
             repr_matrix.append(np.concatenate(temp,axis=1))
         return repr_matrix
         
@@ -151,16 +168,21 @@ class ServerBase:
         with torch.no_grad():
             for data,label in testloader:
                 data,label = data.to(self.device),label.to(self.device)
-                data=data.view(-1,28*28)
+                # data=data.view(-1,28*28)
                 preds = model(data)
-                loss  = self.loss_func(preds,label)
-                preds = torch.argmax(preds,dim=1)
+                loss  = self.loss_func(preds[tid],label)
+                preds = torch.argmax(preds[tid],dim=1)
                 total_acc +=(preds==label).sum().item()
                 total_loss+=loss
                 total_num+=len(label)
         print(f"Task : {tid} | Test : avg_loss = {total_loss/total_num} | acc = {total_acc/total_num}")        
         return total_acc/total_num
     
+    
+    def initModel(self):
+        self.model = ResNet18(self.taskcla,20)
+        self.opti = SGD(self.model.parameters(),lr=0.1)
+        self.model.to(self.device)
 
     def init_data(self):
         self.splitData2Task()
@@ -183,7 +205,10 @@ class ServerBase:
         pass
 
     def splitData2Task(self):
-        self.alldata, taskcla, input_shape = pmnist_dataset.get(42, pc_valid=0.1)
+        # self.alldata, taskcla, input_shape = pmnist_dataset.get(42, pc_valid=0.1)
+        self.alldata, self.taskcla, input_shape = cifar100.get(42, pc_valid=0.1)
+        # print(' ')
+    
 
     def splitTaskData2Client(self, tid):
         # 采样
@@ -233,11 +258,12 @@ class ClientBase:
         self,
         localEpoch,
         localBatchSize,
-        model: MLP,
+        model: ResNet,
         lossFun,
         optim: optim.Optimizer,
         global_parameters,
-        proj_mat:List
+        proj_mat:List,
+        taskid
     ):
         model.load_state_dict(global_parameters, strict=True)
         self.train_dl = DataLoader(
@@ -246,40 +272,51 @@ class ClientBase:
 
         for epoch in range(localEpoch):
             for data, label in self.train_dl:
-                data=data.view(-1,28*28)
+                # data=data.view(-1,28*28)
                 data, label = data.to(self.device), label.to(self.device)
                 preds = model(data)
-                loss = lossFun(preds, label)
+                loss = lossFun(preds[taskid], label)
                 loss.backward()
                 if proj_mat:
-                    for  k,(m,params) in enumerate(model.named_parameters()):
-                        sz = params.grad.data.size(0)
-                        params.grad.data = params.grad.data - torch.mm(params.grad.data.view(sz,-1),proj_mat[k]).view(params.size())
+                    # for  k,(m,params) in enumerate(model.named_parameters()):
+                    #     sz = params.grad.data.size(0)
+                    #     params.grad.data = params.grad.data - torch.mm(params.grad.data.view(sz,-1),proj_mat[k]).view(params.size())
+                    kk=0
+                    for k, (m,params) in enumerate(model.named_parameters()):
+                        if k<15 and len(params.size())!=1:
+                            sz =  params.grad.data.size(0)
+                            params.grad.data = params.grad.data - torch.mm(params.grad.data.view(sz,-1),\
+                                                                    proj_mat[kk]).view(params.size())
+                            kk +=1
+                        elif (k<15 and len(params.size())==1) :
+                            params.grad.data.fill_(0)
                 optim.step()
                 optim.zero_grad()
 
         return model.state_dict()
     
-    def get_representation_matrix(self,model,global_parameters):
+    def get_representation_matrix(self,model:ResNet,global_parameters):
         model.load_state_dict(global_parameters, strict=True)
-        r = np.arange(len(self.train_dl.dataset))
-        np.random.shuffle(r)
-        r = torch.LongTensor(r).to(self.device)
-        size = min(len(self.train_dataset),300)
-        b = r[:size]
-        example_data = self.train_dl.dataset[b][0].view(-1,28*28)
-        example_data = example_data.to(self.device)
-        example_out = model(example_data)
+        mat_list= model.get_representation_matrix_ResNet18(self.device,self.train_dataset)
+
+        # r = np.arange(len(self.train_dl.dataset))
+        # np.random.shuffle(r)
+        # r = torch.LongTensor(r).to(self.device)
+        # size = min(len(self.train_dataset),300)
+        # b = r[:size]
+        # example_data = self.train_dl.dataset[b][0].view(-1,28*28)
+        # example_data = example_data.to(self.device)
+        # example_out = model(example_data)
         
-        batch_list=[size]*3
-        mat_list = []
-        act_key = list(model.act.keys())
+        # batch_list=[size]*3
+        # mat_list = []
+        # act_key = list(model.act.keys())
         
-        for i in range(len(act_key)):
-            bsz = batch_list[i]
-            act = model.act[act_key[i]].detach().cpu().numpy()
-            activation = act[0:bsz].transpose()
-            mat_list.append(activation)
+        # for i in range(len(act_key)):
+        #     bsz = batch_list[i]
+        #     act = model.act[act_key[i]].detach().cpu().numpy()
+        #     activation = act[0:bsz].transpose()
+        #     mat_list.append(activation)
             
         return mat_list
 
