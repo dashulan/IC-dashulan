@@ -1,4 +1,6 @@
+import re
 import torch
+import tqdm
 import numpy as np
 from torch import optim
 from torch.utils.data.dataloader import DataLoader
@@ -10,7 +12,6 @@ from utils import pmnist_dataset
 from typing import List
 from torch.optim import SGD
 from datasets import cifar100
-from clientBase import  ClientBase
 
 
 class ServerBase:
@@ -51,18 +52,15 @@ class ServerBase:
         self.train_clients()
 
     def train_clients(self):
-        commu = 160
+        commu = 1
         for tid in range(self.TaskNum):
             self.splitTaskData2Client(tid)
             self.currentTask = tid
-            self.opti = SGD(self.model.parameters(),lr=0.1,momentum=0.9,weight_decay=5e-4)
-            lr = 0.1
             for curr_round in range(commu):
                 self.sum_parameters = None
-                # print("-" * 20)
                 for client in self.clients:
 
-                    local_parameters = client.localUpdate(1,128,self.model,self.loss_func,self.opti,self.global_parameters,tid,self.proj)
+                    local_parameters = client.localUpdate(1,64,self.model,self.loss_func,self.opti,self.global_parameters,tid)
 
                     if self.sum_parameters is None:
                         self.sum_parameters = {}
@@ -71,27 +69,14 @@ class ServerBase:
                     else:
                         for var in self.sum_parameters:
                             self.sum_parameters[var] = self.sum_parameters[var] +local_parameters[var]
-                            # self.sum_parameters[var] =  local_parameters[var]
-
-                    # for var in self.global_parameters:
-                    #     self.global_parameters[var] = local_parameters[var]
-
-                    #
-                    # print(f'model in client {client.cid} test')
-                    # self.serverEvaluate(tid,parameters=local_parameters)
-                # print("-"*20)
 
                 for var in self.global_parameters:
                     self.global_parameters[var] = (self.sum_parameters[var]/len(self.clients))
-                    # self.global_parameters[var] = self.sum_parameters[var]
-                # self.serverEvaluate(tid)
-                if curr_round==80 or curr_round==120:
-                    lr /=10
-                    self.opti.param_groups[0]['lr'] = lr
-
-            # for client in self.clients:
-            #     client.getProj(self.model,self.global_parameters)
-            self.getProj()
+                self.serverEvaluate(tid)
+            
+            for client in self.clients:
+                client.getProj(self.model,self.global_parameters)
+            # self.getProj()
             
             print("-"*40)
             print(f"after Task {tid}")
@@ -100,7 +85,6 @@ class ServerBase:
                 # print(f"evaluate at task {ttid} | acc = {acc} ")
             print("-"*40)
 
-    # GPM based method
     def getProj(self):
         reps_mat = self.getReprMatrix()
         
@@ -126,11 +110,10 @@ class ServerBase:
             temp_matrix.append(client.get_representation_matrix(self.model,self.global_parameters))
         repr_matrix = []
         for j in range(len(temp_matrix[0])):
-            temp = np.zeros_like(temp_matrix[0][j])
-            for i in range(1):
-                temp+=temp_matrix[i][j]
-                # temp.append(temp_matrix[i][j])
-            repr_matrix.append(temp/1)
+            temp = []
+            for i in range(3):
+                temp.append(temp_matrix[i][j])
+            repr_matrix.append(np.concatenate(temp,axis=1))
         return repr_matrix
         
     def update_GPM(self,threshold,mat_list,feature_list=[]):
@@ -175,19 +158,16 @@ class ServerBase:
                 else:
                     feature_list[i] = Ui
         return feature_list
+                
 
 
-    # evaluate
-    def serverEvaluate(self,tid,parameters=None,model=None):
+    def serverEvaluate(self,tid):
         test_datasets = self.loadTesTaskData(tid)
         testloader = DataLoader(test_datasets,batch_size=20)
         total_acc ,total_loss=0,0
         total_num=0
         model = self.model
-        if parameters:
-            model.load_state_dict(parameters)
-        else:
-            model.load_state_dict(self.get_global_parameters())
+        model.load_state_dict(self.get_global_parameters())
         with torch.no_grad():
             for data,label in testloader:
                 data,label = data.to(self.device),label.to(self.device)
@@ -200,75 +180,68 @@ class ServerBase:
                 total_num+=len(label)
         print(f"Task : {tid} | Test : avg_loss = {total_loss/total_num} | acc = {total_acc/total_num}")        
         return total_acc/total_num
-
-    # init method
+    
+    
     def initModel(self):
         # self.model = ResNet18(self.taskcla,20)
         self.model = resenet3232(self.taskcla)
         self.opti = SGD(self.model.parameters(),lr=0.1,momentum=0.9,weight_decay=4e-5)
         self.model.to(self.device)
 
-    def init_clients(self):
-        for i in range(1):
-            self.clients.append(ClientBase(cid=i))
+    def init_data(self):
+        self.splitData2Task()
 
     def init_global_weights(self):
         for key,var in self.model.state_dict().items():
             self.global_parameters[key] =var.clone()
+    
 
-    # dataBased Methods
-    def init_data(self):
-        self.splitData2Task()
+    def get_global_parameters(self):
+        return self.global_parameters
+
+    def init_clients(self):
+        for i in range(3):
+            self.clients.append(ClientBase(cid=i))
+
+    def datasetsAllocation(self):
+        dataPerTask = []
+
+        pass
 
     def splitData2Task(self):
         # self.alldata, taskcla, input_shape = pmnist_dataset.get(42, pc_valid=0.1)
         self.alldata, self.taskcla, input_shape = cifar100.get(42, pc_valid=0.1)
+        # print(' ')
+    
 
     def splitTaskData2Client(self, tid):
-
-        cNum = len(self.clients)
-
+        # 采样
         datalen = len(self.alldata[tid]["train"]["x"])
-        vdatalen = len(self.alldata[tid]['valid']['x'])
-
+        cNum = len(self.clients)
         sizePerClient = datalen // cNum
-        vsizePerClient = vdatalen // cNum
-
         indices = np.arange(datalen)
-        vindices = np.arange(vdatalen)
-
         for client in self.clients:
             client_indices = np.random.choice(
                 indices, min(sizePerClient, len(indices)), replace=False
             )
-            vclient_indices = np.random.choice(
-                vindices,min(vsizePerClient,len(vindices)),replace=False
-            )
-
             cTrainDataset = TensorDataset(
                 self.alldata[tid]["train"]["x"][client_indices],
                 self.alldata[tid]["train"]["y"][client_indices],
             )
-            cValidDataset = TensorDataset(
-                self.alldata[tid]['valid']['x'][vclient_indices],
-                self.alldata[tid]['valid']['y'][vclient_indices],
-            )
             # cTestDataset = TensorDataset(self.alldata[tid]['test']['x'][client_indices],self.alldata[tid]['test']['y'][client_indices])
-            client.load_data(cTrainDataset,cValidDataset)
+            client.load_data(cTrainDataset)
             indices = np.setdiff1d(indices, client_indices)
-            vindices = np.setdiff1d(vindices,vclient_indices)
+
+    def get_weights(self):
+        pass
+
+    def set_weights(self):
+        pass
 
     def loadTesTaskData(self,tid):
         return TensorDataset(self.alldata[tid]['test']['x'],self.alldata[tid]['test']['y'])
 
-    # utils methods
-    def adjust_learning_rate(self,optimizer, round):
-        """Sets the learning rate to the initial LR decayed by 10 every 10 round"""
-        lr = 0.1 * (0.1 ** (round // 10))
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = lr
 
-<<<<<<< HEAD
 class ClientBase:
     def __init__(self, cid) -> None:
         self.cid = cid
@@ -399,10 +372,6 @@ class ClientBase:
 
 
 
-=======
-    def get_global_parameters(self):
-        return self.global_parameters
->>>>>>> cbb309c2980f67e1fb3c710e1830ea3448ba4ce4
 
 if __name__ == "__main__":
     s = ServerBase()
