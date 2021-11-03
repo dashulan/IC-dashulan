@@ -7,6 +7,7 @@ from torch.utils.data.dataloader import DataLoader
 from torch.utils.data import TensorDataset
 from networks.MLP import MLP
 from networks.resnet18 import ResNet, ResNet18
+from networks.resnet import Renset32,resenet3232
 from utils import pmnist_dataset
 from typing import List
 from torch.optim import SGD
@@ -21,7 +22,7 @@ class ServerBase:
         self.alldata = None
         self.taskCla = []
         # self.model:MLP = MLP(200)
-        self.model:ResNet18 = None
+        self.model:Renset32 = None
 
         
         self.global_parameters ={}
@@ -39,7 +40,8 @@ class ServerBase:
 
         # self.threshold = np.array([0.95,0.99,0.99])
 
-        self.threshold = np.array([0.965] * 20)
+        # self.threshold = np.array([0.965] * 20)
+        self.threshold = np.array([0.965] * 31)
 
 
     def run(self):
@@ -181,8 +183,9 @@ class ServerBase:
     
     
     def initModel(self):
-        self.model = ResNet18(self.taskcla,20)
-        self.opti = SGD(self.model.parameters(),lr=0.1)
+        # self.model = ResNet18(self.taskcla,20)
+        self.model = resenet3232(self.taskcla)
+        self.opti = SGD(self.model.parameters(),lr=0.1,momentum=0.9,weight_decay=4e-5)
         self.model.to(self.device)
 
     def init_data(self):
@@ -253,7 +256,7 @@ class ClientBase:
         self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
         self.feature_list = []
         self.proj = []
-        self.threshold = np.array([0.965] * 20)
+        self.threshold = np.array([0.965] * 33)
 
     def load_data(self, trainDataset):
         self.train_dataset = trainDataset
