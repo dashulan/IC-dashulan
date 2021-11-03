@@ -1,6 +1,4 @@
-import re
 import torch
-import tqdm
 import numpy as np
 from torch import optim
 from torch.utils.data.dataloader import DataLoader
@@ -11,6 +9,7 @@ from utils import pmnist_dataset
 from typing import List
 from torch.optim import SGD
 from datasets import cifar100
+from clientBase import  ClientBase
 
 
 class ServerBase:
@@ -50,15 +49,18 @@ class ServerBase:
         self.train_clients()
 
     def train_clients(self):
-        commu = 1
+        commu = 160
         for tid in range(self.TaskNum):
             self.splitTaskData2Client(tid)
             self.currentTask = tid
+            self.opti = SGD(self.model.parameters(),lr=0.1,momentum=0.9,weight_decay=5e-4)
+            lr = 0.1
             for curr_round in range(commu):
                 self.sum_parameters = None
+                # print("-" * 20)
                 for client in self.clients:
 
-                    local_parameters = client.localUpdate(1,64,self.model,self.loss_func,self.opti,self.global_parameters,tid)
+                    local_parameters = client.localUpdate(1,128,self.model,self.loss_func,self.opti,self.global_parameters,tid,self.proj)
 
                     if self.sum_parameters is None:
                         self.sum_parameters = {}
@@ -67,14 +69,27 @@ class ServerBase:
                     else:
                         for var in self.sum_parameters:
                             self.sum_parameters[var] = self.sum_parameters[var] +local_parameters[var]
+                            # self.sum_parameters[var] =  local_parameters[var]
+
+                    # for var in self.global_parameters:
+                    #     self.global_parameters[var] = local_parameters[var]
+
+                    #
+                    # print(f'model in client {client.cid} test')
+                    # self.serverEvaluate(tid,parameters=local_parameters)
+                # print("-"*20)
 
                 for var in self.global_parameters:
                     self.global_parameters[var] = (self.sum_parameters[var]/len(self.clients))
-                self.serverEvaluate(tid)
-            
-            for client in self.clients:
-                client.getProj(self.model,self.global_parameters)
-            # self.getProj()
+                    # self.global_parameters[var] = self.sum_parameters[var]
+                # self.serverEvaluate(tid)
+                if curr_round==80 or curr_round==120:
+                    lr /=10
+                    self.opti.param_groups[0]['lr'] = lr
+
+            # for client in self.clients:
+            #     client.getProj(self.model,self.global_parameters)
+            self.getProj()
             
             print("-"*40)
             print(f"after Task {tid}")
@@ -83,6 +98,7 @@ class ServerBase:
                 # print(f"evaluate at task {ttid} | acc = {acc} ")
             print("-"*40)
 
+    # GPM based method
     def getProj(self):
         reps_mat = self.getReprMatrix()
         
@@ -108,10 +124,11 @@ class ServerBase:
             temp_matrix.append(client.get_representation_matrix(self.model,self.global_parameters))
         repr_matrix = []
         for j in range(len(temp_matrix[0])):
-            temp = []
-            for i in range(3):
-                temp.append(temp_matrix[i][j])
-            repr_matrix.append(np.concatenate(temp,axis=1))
+            temp = np.zeros_like(temp_matrix[0][j])
+            for i in range(1):
+                temp+=temp_matrix[i][j]
+                # temp.append(temp_matrix[i][j])
+            repr_matrix.append(temp/1)
         return repr_matrix
         
     def update_GPM(self,threshold,mat_list,feature_list=[]):
@@ -156,16 +173,19 @@ class ServerBase:
                 else:
                     feature_list[i] = Ui
         return feature_list
-                
 
 
-    def serverEvaluate(self,tid):
+    # evaluate
+    def serverEvaluate(self,tid,parameters=None,model=None):
         test_datasets = self.loadTesTaskData(tid)
         testloader = DataLoader(test_datasets,batch_size=20)
         total_acc ,total_loss=0,0
         total_num=0
         model = self.model
-        model.load_state_dict(self.get_global_parameters())
+        if parameters:
+            model.load_state_dict(parameters)
+        else:
+            model.load_state_dict(self.get_global_parameters())
         with torch.no_grad():
             for data,label in testloader:
                 data,label = data.to(self.device),label.to(self.device)
@@ -178,197 +198,75 @@ class ServerBase:
                 total_num+=len(label)
         print(f"Task : {tid} | Test : avg_loss = {total_loss/total_num} | acc = {total_acc/total_num}")        
         return total_acc/total_num
-    
-    
+
+    # init method
     def initModel(self):
         self.model = ResNet18(self.taskcla,20)
         self.opti = SGD(self.model.parameters(),lr=0.1)
         self.model.to(self.device)
 
-    def init_data(self):
-        self.splitData2Task()
+    def init_clients(self):
+        for i in range(1):
+            self.clients.append(ClientBase(cid=i))
 
     def init_global_weights(self):
         for key,var in self.model.state_dict().items():
             self.global_parameters[key] =var.clone()
-    
 
-    def get_global_parameters(self):
-        return self.global_parameters
-
-    def init_clients(self):
-        for i in range(3):
-            self.clients.append(ClientBase(cid=i))
-
-    def datasetsAllocation(self):
-        dataPerTask = []
-
-        pass
+    # dataBased Methods
+    def init_data(self):
+        self.splitData2Task()
 
     def splitData2Task(self):
         # self.alldata, taskcla, input_shape = pmnist_dataset.get(42, pc_valid=0.1)
         self.alldata, self.taskcla, input_shape = cifar100.get(42, pc_valid=0.1)
-        # print(' ')
-    
 
     def splitTaskData2Client(self, tid):
-        # 采样
-        datalen = len(self.alldata[tid]["train"]["x"])
+
         cNum = len(self.clients)
+
+        datalen = len(self.alldata[tid]["train"]["x"])
+        vdatalen = len(self.alldata[tid]['valid']['x'])
+
         sizePerClient = datalen // cNum
+        vsizePerClient = vdatalen // cNum
+
         indices = np.arange(datalen)
+        vindices = np.arange(vdatalen)
+
         for client in self.clients:
             client_indices = np.random.choice(
                 indices, min(sizePerClient, len(indices)), replace=False
             )
+            vclient_indices = np.random.choice(
+                vindices,min(vsizePerClient,len(vindices)),replace=False
+            )
+
             cTrainDataset = TensorDataset(
                 self.alldata[tid]["train"]["x"][client_indices],
                 self.alldata[tid]["train"]["y"][client_indices],
             )
+            cValidDataset = TensorDataset(
+                self.alldata[tid]['valid']['x'][vclient_indices],
+                self.alldata[tid]['valid']['y'][vclient_indices],
+            )
             # cTestDataset = TensorDataset(self.alldata[tid]['test']['x'][client_indices],self.alldata[tid]['test']['y'][client_indices])
-            client.load_data(cTrainDataset)
+            client.load_data(cTrainDataset,cValidDataset)
             indices = np.setdiff1d(indices, client_indices)
-
-    def get_weights(self):
-        pass
-
-    def set_weights(self):
-        pass
+            vindices = np.setdiff1d(vindices,vclient_indices)
 
     def loadTesTaskData(self,tid):
         return TensorDataset(self.alldata[tid]['test']['x'],self.alldata[tid]['test']['y'])
 
+    # utils methods
+    def adjust_learning_rate(self,optimizer, round):
+        """Sets the learning rate to the initial LR decayed by 10 every 10 round"""
+        lr = 0.1 * (0.1 ** (round // 10))
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
 
-class ClientBase:
-    def __init__(self, cid) -> None:
-        self.cid = cid
-        self.train_dataset = None
-        self.train_dl: DataLoader = None
-        self.state = {}
-        self.tasks = []
-        self.local_args = {
-            "epoch": 10,
-            "batchsize": 50,
-        }
-        self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-        self.feature_list = []
-        self.proj = []
-        self.threshold = np.array([0.965] * 20)
-
-    def load_data(self, trainDataset):
-        self.train_dataset = trainDataset
-
-    def localUpdate(
-        self,
-        localEpoch,
-        localBatchSize,
-        model: ResNet,
-        lossFun,
-        optim: optim.Optimizer,
-        global_parameters,
-        taskid
-    ):
-        model.load_state_dict(global_parameters, strict=True)
-        self.train_dl = DataLoader(
-            self.train_dataset, batch_size=localBatchSize, shuffle=True
-        )
-
-        for epoch in range(localEpoch):
-            for data, label in self.train_dl:
-                # data=data.view(-1,28*28)
-                data, label = data.to(self.device), label.to(self.device)
-                preds = model(data)
-                loss = lossFun(preds[taskid], label)
-                loss.backward()
-                if self.proj:
-                    # for  k,(m,params) in enumerate(model.named_parameters()):
-                    #     sz = params.grad.data.size(0)
-                    #     params.grad.data = params.grad.data - torch.mm(params.grad.data.view(sz,-1),proj_mat[k]).view(params.size())
-                    kk=0
-                    for k, (m,params) in enumerate(model.named_parameters()):
-                        if k<15 and len(params.size())!=1:
-                            sz =  params.grad.data.size(0)
-                            params.grad.data = params.grad.data - torch.mm(params.grad.data.view(sz,-1),\
-                                                                    self.proj[kk]).view(params.size())
-                            kk +=1
-                        elif (k<15 and len(params.size())==1) :
-                            params.grad.data.fill_(0)
-                optim.step()
-                optim.zero_grad()
-
-        return model.state_dict()
-    
-    
-    def getProj(self,model,global_parameters):
-        repr_mat = self.get_representation_matrix(model,global_parameters)
-        self.feature_list = self.updateGPM(self.threshold,repr_mat,self.feature_list)
-        self.proj = self.calculateProj()
-
-    def calculateProj(self):
-        projection_mat = []
-        # for i in range(len(self.model.act)):
-        #     Up = torch.Tensor(np.dot(self.feature_list[i],self.feature_list[i].transpose())).to(self.device)
-        #     projection_mat.append(Up)
-                    # # Projection Matrix Precomputation
-        for i in range(len(self.feature_list)):
-            Uf=torch.Tensor(np.dot(self.feature_list[i],self.feature_list[i].transpose())).to(self.device)
-            print('Layer {} - Projection Matrix shape: {}'.format(i+1,Uf.shape))
-            projection_mat.append(Uf)
-        return projection_mat
-
-    def get_representation_matrix(self,model:ResNet,global_parameters):
-        model.load_state_dict(global_parameters, strict=True)
-        mat_list= model.get_representation_matrix_ResNet18(self.device,self.train_dataset)
-        self.repr_matrix = mat_list
-        return mat_list
-    
-
-    def updateGPM(self,threshold,mat_list,feature_list=[]):
-
-        if not feature_list:
-            for i in range(len(mat_list)):
-                activation = mat_list[i]
-                U,S,vh = np.linalg.svd(activation,full_matrices=False)
-                sval_total = (S**2).sum()
-                sval_ration = (S**2)/sval_total
-                r= np.sum(np.cumsum(sval_ration)<threshold[i])
-                feature_list.append(U[:,0:r])
-        else:
-            for i in range(len(mat_list)):
-                activation = mat_list[i]
-                U1,S1,vh1 = np.linalg.svd(activation,full_matrices=False)
-                sval_total = (S1**2).sum()
-
-
-                act_hat = activation - np.dot(np.dot(feature_list[i],feature_list[i].transpose()),activation)
-                U,S,Vh = np.linalg.svd(act_hat,full_matrices=False)
-                
-                sval_hat = (S**2).sum()
-                sval_ration = (S**2)/sval_total
-                accumulated_sval = (sval_total-sval_hat)/sval_total
-                
-                r = 0
-
-                for ii in range(sval_ration.shape[0]):
-                    if accumulated_sval<threshold[i]:
-                        accumulated_sval+=sval_ration[ii]
-                        r+=1
-                    else:
-                        break
-                if r==0:
-                    print(f"Skip Updating GPM for layer: {i+1}")
-                    continue
-                
-                Ui = np.hstack((feature_list[i],U[:,0:r]))
-                if Ui.shape[1]>Ui.shape[0]:
-                    feature_list[i]=Ui[:,0:Ui.shape[0]]
-                else:
-                    feature_list[i] = Ui
-        return feature_list
-                
-
-
-
+    def get_global_parameters(self):
+        return self.global_parameters
 
 if __name__ == "__main__":
     s = ServerBase()
