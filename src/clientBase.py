@@ -1,10 +1,13 @@
+import re
 import torch
+import tqdm
 import numpy as np
 from torch import optim
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data import TensorDataset
 from networks.MLP import MLP
 from networks.resnet18 import ResNet, ResNet18
+from networks.resnet import Renset32,resenet3232
 from utils import pmnist_dataset
 from typing import List
 from torch.optim import SGD
@@ -26,7 +29,7 @@ class ClientBase:
         self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
         self.feature_list = []
         self.proj = []
-        self.threshold = np.array([0.965] * 20)
+        self.threshold = np.array([0.965] * 33)
         self.local_states = {}
         self.bestModel = None
         self.bestLoss = np.inf

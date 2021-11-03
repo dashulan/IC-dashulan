@@ -59,6 +59,7 @@ class ResNet(nn.Module):
         
         self.taskcla = taskcla
         self.linear=torch.nn.ModuleList()
+
         for t, n in self.taskcla:
             self.linear.append(nn.Linear(nf * 8 * block.expansion * 4, n, bias=False))
         self.act = OrderedDict()

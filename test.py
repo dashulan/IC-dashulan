@@ -1,6 +1,8 @@
 # %%
+from os import path
 from typing import OrderedDict
 import torch
+from torch._C import import_ir_module
 outputs = torch.tensor([[1,2],[3,4]])
 ret,pred = torch.max(outputs,1)
 targets =torch.tensor([0,1]) 
@@ -67,5 +69,12 @@ z= x4**3
 z.backward()
 x.grad
 # %%
-[1]*3
-
+inchannle = []
+a =[1]*3
+b = [2]*3
+inchannle.extend(a)
+inchannle.extend(b)
+inchannle
+from src.networks.resnet import resenet3232
+net = resenet3232()
+net.getActList()
