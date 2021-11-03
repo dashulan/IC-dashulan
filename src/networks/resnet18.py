@@ -155,12 +155,12 @@ class ResNet(nn.Module):
                 mat_final.append(mat_sc_list[ik])
                 ik+=1
 
-        print('-'*30)
-        print('Representation Matrix')
-        print('-'*30)
-        for i in range(len(mat_final)):
-            print ('Layer {} : {}'.format(i+1,mat_final[i].shape))
-        print('-'*30)
+        # print('-'*30)
+        # print('Representation Matrix')
+        # print('-'*30)
+        # for i in range(len(mat_final)):
+        #     print ('Layer {} : {}'.format(i+1,mat_final[i].shape))
+        # print('-'*30)
         return mat_final    
     
     
