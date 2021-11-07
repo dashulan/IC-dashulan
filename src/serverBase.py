@@ -12,6 +12,7 @@ from utils import pmnist_dataset
 from typing import List
 from torch.optim import SGD
 from datasets import cifar100
+from src.clientBase import ClientBase
 
 
 class ServerBase:

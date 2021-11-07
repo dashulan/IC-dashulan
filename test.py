@@ -78,3 +78,11 @@ inchannle
 from src.networks.resnet import resenet3232
 net = resenet3232()
 net.getActList()
+# %%
+from src.networks.resnet import resenet3232
+net = resenet3232()
+for n,p in net.named_parameters():
+    print(f"{n} : {p}")
+    print('')
+
+
