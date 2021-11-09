@@ -1,4 +1,7 @@
 import itertools
+
+from torch.utils.tensorboard.summary import image
+from networks.MLP_Fea  import MLPFF
 import re
 from numpy import mod
 from torch._C import device
@@ -12,11 +15,43 @@ from datasets import cifar100
 from torch.utils.data import DataLoader,TensorDataset
 import torch
 from copy import deepcopy
+import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter, writer
 import numpy as np
 
 
+def feature_loss(outputs,targets):
+    return F.mse_loss(outputs,targets)
+
+def learnTrans(model,model_old,trnloader,device,modelMLP,optimMLP):
+
+    feature_input = []
+    feature_target = []
+    for images,targets in trnloader:
+        images = images.to(device)
+        outputs_old = model_old(images)
+        outputs_new = model(images)
+        feat_old = model_old.features
+        feat_new = model.features
+        feature_input.append(feat_new)
+        feature_target.append(feat_old)
+    
+    features_datasets = TensorDataset(feature_input,feature_target)
+    feature_loader = DataLoader(features_datasets,batch_size=128)
+
+    for e in range(40):
+        allloss ,allnum= 0,0
+        for data,label in feature_loader:
+            ouputs = modelMLP(data)
+            loss = feature_loss(ouputs,label)
+            allloss+=loss
+            allnum+=len(label)
+            optimMLP.zero_grad()
+            loss.backward()
+            optimMLP.step()
+        print(f"")
+    
 
 
 
@@ -90,9 +125,9 @@ def train_epoch(model,t, trn_loader,device,optim,fisher,old_params):
         # Forward current model
         outputs = model(images.to(device))
 
-        # loss = criterion_base(t, outputs, targets.to(device))
+        loss = criterion_base(t, outputs, targets.to(device))
         # loss = criterion_features(t, outputs, targets.to(device), model_old.features,model.features)
-        loss = criterion_ewc(t,outputs,targets.to(device),fisher,model,old_params)
+        # loss = criterion_ewc(t,outputs,targets.to(device),fisher,model,old_params)
         allloss+=loss
         allnum+=len(targets)
 
@@ -162,7 +197,9 @@ def main(args):
     alldata, taskcla, input_shape = cifar100.get(42, pc_valid=0.1)
 
     model = resenet3232(taskcla)
+    mlpM =  MLPFF(200).to(device)
     # model = ResNet18(taskcla,64)
+    optimMLP = SGD(mlpM.parameters(),lr=0.1)
 
     model.to(device)
     model_state = {}
@@ -203,9 +240,11 @@ def main(args):
                 optim.param_groups[0]['lr']=lr
             writer.add_scalar(f"task:{t}/Loss/valid",validloss,e)
             writer.add_scalar(f"task:{t}/Accuracy/valid",acc,e)
+        
 
-        fisher ,oldp=  post_train(t,trn_loader,fisher,model,device,optim)
-        old_params = oldp
+        learnTrans(model,model_old,trn_loader,device,mlpM,optimMLP)
+        # fisher ,oldp=  post_train(t,trn_loader,fisher,model,device,optim)
+        # old_params = oldp
 
         avgacc = 0
         model.load_state_dict(best_model)
@@ -217,18 +256,18 @@ def main(args):
         writer.add_scalar(f"avgtask/Acc/",avgacc/(t+1),t)
         
         # eval(model,tst_loader,t)
-        # model_state = deepcopy(model.state_dict())
-        # model_old.load_state_dict(model_state)
-        # model_old.to(device)
-        # model_old.eval()
+        model_state = deepcopy(model.state_dict())
+        model_old.load_state_dict(model_state)
+        model_old.to(device)
+        model_old.eval()
 
 if __name__ =='__main__':
     args = {
         'lr':0.1,
-        'nepochs':80,
+        'nepochs':1,
         'momentum':0.9,
         'wd':5e-4,
-        'exp_name':'ewc_fix10w'
+        'exp_name':'feature_fix_1'
     }
 
     main(args)

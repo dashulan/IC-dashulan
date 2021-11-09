@@ -85,4 +85,7 @@ for n,p in net.named_parameters():
     print(f"{n} : {p}")
     print('')
 
-
+# %%
+import torch
+a =torch.arange(24).reshape(2,3,4)
+a.unsqueeze(4).shape
