@@ -1,5 +1,3 @@
-import itertools
-
 from torch.utils.tensorboard.summary import image
 from networks.MLP_Fea  import MLPFF
 import re
