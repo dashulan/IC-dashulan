@@ -21,10 +21,10 @@ from torch.utils.tensorboard import SummaryWriter, writer
 import numpy as np
 
 
-def feature_loss(outputs,targets):
-    return F.mse_loss(outputs,targets)
+def feature_loss():
+    return nn.MSELoss()
 
-def learnTrans(model,model_old,trnloader,device,modelMLP,optimMLP):
+def learnTrans(model,model_old,trnloader,device,modelMLP,optimMLP,writer=None):
 
     feature_input = []
     feature_target = []
@@ -32,25 +32,35 @@ def learnTrans(model,model_old,trnloader,device,modelMLP,optimMLP):
         images = images.to(device)
         outputs_old = model_old(images)
         outputs_new = model(images)
-        feat_old = model_old.features
-        feat_new = model.features
+        feat_old = model_old.features.clone().detach()
+        feat_new = model.features.clone().detach()
+        feat_old = feat_old/feat_old.norm(dim=1).view(-1,1)
+        feat_new = feat_new/feat_new.norm(dim=1).view(-1,1)
         feature_input.append(feat_new)
         feature_target.append(feat_old)
     
-    features_datasets = TensorDataset(feature_input,feature_target)
+    features_datasets = TensorDataset(torch.cat(feature_input),torch.cat(feature_target))
     feature_loader = DataLoader(features_datasets,batch_size=128)
+    ffloss = feature_loss()
 
-    for e in range(40):
+    lr =0.1
+    for e in range(160):
         allloss ,allnum= 0,0
         for data,label in feature_loader:
-            ouputs = modelMLP(data)
-            loss = feature_loss(ouputs,label)
+            outputs = modelMLP(data)
+            loss = ffloss(outputs,label)
             allloss+=loss
             allnum+=len(label)
+            
             optimMLP.zero_grad()
             loss.backward()
+            # torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clipgrad)
             optimMLP.step()
-        print(f"")
+        if e ==80 or e==120:
+            lr/=10
+            optimMLP.param_groups[0]['lr']=lr
+        writer.add_scalar(f"feature reg loss",allloss/allnum,e)
+        # print(f"loss: {allloss/allnum}")
     
 
 
@@ -157,6 +167,31 @@ def eval(model,tst_loader,t,device):
     return total_loss/total_num,total_acc/total_num
 
 
+def eval_MLP(model,tst_loader,t,device,modelMLp):
+    model.eval()
+    total_loss = 0
+    total_acc=0
+    total_num = 0
+    with torch.no_grad():
+        for images,targets in tst_loader:
+            images,targets = images.to(device),targets.to(device)
+
+            # data=data.view(-1,28*28)
+            preds = model(images)
+            features = model.features.clone()
+            preds = modelMLp(features)
+            preds = model.linear_head(preds)
+
+            # loss  = torch.nn.function(preds[t],label)
+            loss = torch.nn.functional.cross_entropy(preds[t],targets)
+            preds = torch.argmax(preds[t],dim=1)
+            total_acc +=(preds==targets).sum().item()
+            total_loss+=loss
+            total_num+=len(targets)
+    return total_loss/total_num,total_acc/total_num
+
+
+
 def compute_fisher(trn_loader,t,model,device,optim):
     current_fisher = {n:torch.zeros(p.shape).to(device) for n,p in model.named_parameters() if p.requires_grad}
 
@@ -199,12 +234,12 @@ def main(args):
     model = resenet3232(taskcla)
     mlpM =  MLPFF(200).to(device)
     # model = ResNet18(taskcla,64)
-    optimMLP = SGD(mlpM.parameters(),lr=0.1)
+    optimMLP = SGD(mlpM.parameters(),lr=0.1,momentum=0.9,weight_decay=1e-3)
 
     model.to(device)
     model_state = {}
     # model_old = ResNet18(taskcla,64)
-    model_old = resenet3232(taskcla)
+    model_old = resenet3232(taskcla).to(device)
 
     old_params = {}
     fisher = {}
@@ -241,15 +276,17 @@ def main(args):
             writer.add_scalar(f"task:{t}/Loss/valid",validloss,e)
             writer.add_scalar(f"task:{t}/Accuracy/valid",acc,e)
         
-
-        learnTrans(model,model_old,trn_loader,device,mlpM,optimMLP)
+        if t>0:
+            learnTrans(model,model_old,trn_loader,device,mlpM,optimMLP,writer)
         # fisher ,oldp=  post_train(t,trn_loader,fisher,model,device,optim)
         # old_params = oldp
 
         avgacc = 0
         model.load_state_dict(best_model)
-        for tt in range(0,t+1):
-            testloss,acc = eval(model,tstes[tt],tt,device)
+        for tt in range(0,t):
+
+            # testloss,acc = eval(model,tstes[tt],tt,device)
+            testloss,acc = eval_MLP(model,tstes[tt],tt,device,mlpM)
             avgacc +=acc
             print(f"task : {tt} | test loss : {testloss} | acc : {acc} | ")
 
@@ -264,10 +301,10 @@ def main(args):
 if __name__ =='__main__':
     args = {
         'lr':0.1,
-        'nepochs':1,
+        'nepochs':80,
         'momentum':0.9,
         'wd':5e-4,
-        'exp_name':'feature_fix_1'
+        'exp_name':'feature_fix_temp_1'
     }
 
     main(args)

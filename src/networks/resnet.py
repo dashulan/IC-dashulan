@@ -118,12 +118,18 @@ class Renset32(nn.Module):
         out = self.avgpool(out)
         out = out.view(out.size(0),-1)
         self.features = out
+        tempout = out/out.norm(dim=1).view(-1,1)
         y=[]
         for t,i in self.taskcla:
-            y.append(self.linear[t](out))
+            y.append(self.linear[t](tempout))
         # x = self.fc(x)
         return y
 
+    def linear_head(self,x):
+        y = []
+        for t,i in self.taskcla:
+            y.append(self.linear[t](x))
+        return y
 
     def getActList(self):
         act_list =[]
