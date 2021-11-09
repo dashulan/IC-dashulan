@@ -70,6 +70,8 @@ class Renset32(nn.Module):
         self.layer3 = self._make_layer(block,64,layers[2],stride=2)
         
         self.avgpool = nn.AvgPool2d(8,stride=1)
+
+        self.features = None
         
         # self.fc = nn.Linear(64*block.expansion,num_class)
         
@@ -115,6 +117,7 @@ class Renset32(nn.Module):
         out = self.layer3(out)
         out = self.avgpool(out)
         out = out.view(out.size(0),-1)
+        self.features = out
         y=[]
         for t,i in self.taskcla:
             y.append(self.linear[t](out))
