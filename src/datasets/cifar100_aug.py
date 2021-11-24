@@ -1,38 +1,42 @@
 import os,sys
 import numpy as np
 import torch
-# import utils
+from torch.serialization import load
 from torchvision import datasets,transforms
 from sklearn.utils import shuffle
 
 cf100_dir = './data/'
-file_dir = './data/binary_cifar100'
+file_dir = './data/binary_cifar100_aug'
 
 normalize = transforms.Normalize(mean=[0.5071, 0.4866, 0.4409],std=[0.2009, 0.1984, 0.2023])
 augmentation = [
     transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
     transforms.RandomGrayscale(p=0.2),
-    transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
+    transforms.ColorJitter(0.4, 0.4, 0.4, 0.4), 
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
     normalize
 ]
+
+augmentation_test = [transforms.ToTensor(),normalize]
 
 def get(seed=0,pc_valid=0.10):
     data={}
     taskcla=[]
     size=[3,32,32]
 
-    if not os.path.isdir(file_dir):
-        os.makedirs(file_dir)
+    if  os.path.isdir(file_dir):
+        # os.makedirs(file_dir)
 
         mean=[x/255 for x in [125.3,123.0,113.9]]
         std=[x/255 for x in [63.0,62.1,66.7]]
 
         # CIFAR100
         dat={}
-        dat['train']=datasets.CIFAR100(cf100_dir,train=True,download=True,transforms=augmentation)
-        dat['test']=datasets.CIFAR100(cf100_dir,train=False,download=True,transform=augmentation)
+        # dat['train']=datasets.CIFAR100(cf100_dir,train=True,download=True,transform=augmentation)
+        # dat['test']=datasets.CIFAR100(cf100_dir,train=False,download=True,transform=augmentation_test)
+        dat['train']=datasets.CIFAR100(cf100_dir,train=True,download=True,transform=transforms.Compose(augmentation))
+        dat['test']=datasets.CIFAR100(cf100_dir,train=False,download=True,transform=transforms.Compose(augmentation_test))
         # dat['train'] = datasets.CIFAR100(cf100_dir,train=True,download=False,transform=transforms.Compose([transforms.ToTensor()]))
         # dat['test']  = datasets.CIFAR100(cf100_dir,train=False,download=False,transform=transforms.Compose([transforms.ToTensor()]))
         for n in range(10):
@@ -41,6 +45,7 @@ def get(seed=0,pc_valid=0.10):
             data[n]['ncla']=10
             data[n]['train']={'x': [],'y': []}
             data[n]['test']={'x': [],'y': []}
+
         for s in ['train','test']:
             loader=torch.utils.data.DataLoader(dat[s],batch_size=1,shuffle=False)
             for image,target in loader:
@@ -48,6 +53,8 @@ def get(seed=0,pc_valid=0.10):
                 nn=(n//10)
                 data[nn][s]['x'].append(image) # 255 
                 data[nn][s]['y'].append(n%10)
+        
+
 
         # "Unify" and save
         for t in data.keys():

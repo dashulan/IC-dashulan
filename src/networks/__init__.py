@@ -1,0 +1,1 @@
+allmodels = ['MLP', 'resnet32', 'resnet18']

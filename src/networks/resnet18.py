@@ -57,9 +57,9 @@ class ResNet(nn.Module):
         self.layer3 = self._make_layer(block, nf * 4, num_blocks[2], stride=2)
         self.layer4 = self._make_layer(block, nf * 8, num_blocks[3], stride=2)
         
+        
         self.taskcla = taskcla
         self.linear=torch.nn.ModuleList()
-
         for t, n in self.taskcla:
             self.linear.append(nn.Linear(nf * 8 * block.expansion * 4, n, bias=False))
 

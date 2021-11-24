@@ -11,8 +11,53 @@ from networks.resnet import Renset32,resenet3232
 from utils import pmnist_dataset
 from typing import List
 from torch.optim import SGD
-from datasets import cifar100
+# from datasets import cifar100
+from datasets.memory_dataset import MemoryDataset,get
 from src.clientBase import ClientBase
+from torchvision import transforms
+
+
+def get_transforms(resize, pad, crop, flip, normalize, extend_channel):
+    """Unpack transformations and apply to train or test splits"""
+
+    trn_transform_list = []
+    tst_transform_list = []
+
+    # resize
+    if resize is not None:
+        trn_transform_list.append(transforms.Resize(resize))
+        tst_transform_list.append(transforms.Resize(resize))
+
+    # padding
+    if pad is not None:
+        trn_transform_list.append(transforms.Pad(pad))
+        tst_transform_list.append(transforms.Pad(pad))
+
+    # crop
+    if crop is not None:
+        trn_transform_list.append(transforms.RandomResizedCrop(crop))
+        tst_transform_list.append(transforms.CenterCrop(crop))
+
+    # flips
+    if flip:
+        trn_transform_list.append(transforms.RandomHorizontalFlip())
+
+    # to tensor
+    trn_transform_list.append(transforms.ToTensor())
+    tst_transform_list.append(transforms.ToTensor())
+
+    # normalization
+    if normalize is not None:
+        trn_transform_list.append(transforms.Normalize(mean=normalize[0], std=normalize[1]))
+        tst_transform_list.append(transforms.Normalize(mean=normalize[0], std=normalize[1]))
+
+    # gray to rgb
+    if extend_channel is not None:
+        trn_transform_list.append(transforms.Lambda(lambda x: x.repeat(extend_channel, 1, 1)))
+        tst_transform_list.append(transforms.Lambda(lambda x: x.repeat(extend_channel, 1, 1)))
+
+    return transforms.Compose(trn_transform_list), \
+           transforms.Compose(tst_transform_list)
 
 
 class ServerBase:
@@ -22,7 +67,6 @@ class ServerBase:
         self.TaskNum = 10
         self.alldata = None
         self.taskCla = []
-        # self.model:MLP = MLP(200)
         self.model:Renset32 = None
 
         
@@ -43,7 +87,8 @@ class ServerBase:
 
         # self.threshold = np.array([0.965] * 20)
         self.threshold = np.array([0.965] * 31)
-
+        self.Train_transform,_ = get_transforms(None,4,32,True,((0.5071, 0.4866, 0.4409), (0.2009, 0.1984, 0.2023)),None)
+        _,self.tempt = get_transforms(None,None,None,None,((0.5071, 0.4866, 0.4409), (0.2009, 0.1984, 0.2023)),None)
 
     def run(self):
         self.init_clients()
@@ -160,8 +205,6 @@ class ServerBase:
                     feature_list[i] = Ui
         return feature_list
                 
-
-
     def serverEvaluate(self,tid):
         test_datasets = self.loadTesTaskData(tid)
         testloader = DataLoader(test_datasets,batch_size=20)
@@ -210,13 +253,9 @@ class ServerBase:
         pass
 
     def splitData2Task(self):
-        # self.alldata, taskcla, input_shape = pmnist_dataset.get(42, pc_valid=0.1)
-        self.alldata, self.taskcla, input_shape = cifar100.get(42, pc_valid=0.1)
-        # print(' ')
-    
+        self.alldata, self.taskcla, input_shape = get()
 
     def splitTaskData2Client(self, tid):
-        # 采样
         datalen = len(self.alldata[tid]["train"]["x"])
         cNum = len(self.clients)
         sizePerClient = datalen // cNum
@@ -229,6 +268,9 @@ class ServerBase:
                 self.alldata[tid]["train"]["x"][client_indices],
                 self.alldata[tid]["train"]["y"][client_indices],
             )
+            trn_datasets = MemoryDataset(alldata[t]['train']['x'],alldata[t]['train']['y'],Train_transform)
+            vld_datasets = MemoryDataset(alldata[t]['valid']['x'],alldata[t]['valid']['y'],tempt)
+
             # cTestDataset = TensorDataset(self.alldata[tid]['test']['x'][client_indices],self.alldata[tid]['test']['y'][client_indices])
             client.load_data(cTrainDataset)
             indices = np.setdiff1d(indices, client_indices)
@@ -240,6 +282,7 @@ class ServerBase:
         pass
 
     def loadTesTaskData(self,tid):
+        tst_datasets = MemoryDataset(self.alldata[t]['test']['x'],self.alldata[t]['test']['y'],tempt)
         return TensorDataset(self.alldata[tid]['test']['x'],self.alldata[tid]['test']['y'])
 
 

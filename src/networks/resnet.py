@@ -3,14 +3,17 @@ from typing import ForwardRef, OrderedDict
 from torch.functional import Tensor
 import torch.nn as nn
 from torch.nn.functional import layer_norm
+from torch.nn.modules import module
 from torch.nn.modules.batchnorm import BatchNorm2d
 import numpy as np
 import torch
 import torch.nn.functional as F
+from torch.utils import data
+from torch.utils.data.dataloader import DataLoader
+from torch.utils.data.sampler import RandomSampler
 
-# from networks.resnet18 import ResNet
 
-# __all__ = ['resnet32']
+
 
 def compute_conv_output_size(Lin,kernel_size,stride=1,padding=0,dilation=1):
     return int(np.floor((Lin+2*padding-dilation*(kernel_size-1)-1)/float(stride)+1))
@@ -61,20 +64,18 @@ class Renset32(nn.Module):
 
         self.inplanes = 16
         super(Renset32,self).__init__()
-        # self.conv1 = conv3x3(3,16,1)
-        self.conv1 = nn.Conv2d(3,16,kernel_size=3,stride=1,padding=1,bias=False)
+        self.conv1 = conv3x3(3,16,1)
         self.bn1 = nn.BatchNorm2d(16)
         self.relu = nn.ReLU(16)
         self.layer1 = self._make_layer(block,16,layers[0])
         self.layer2 = self._make_layer(block,32,layers[1],stride=2)
         self.layer3 = self._make_layer(block,64,layers[2],stride=2)
-        
+
+        self.bnL = nn.BatchNorm1d(64)
         self.avgpool = nn.AvgPool2d(8,stride=1)
 
-        self.features = None
-        
         # self.fc = nn.Linear(64*block.expansion,num_class)
-        
+
         # self.head_var = 'fc'
         self.taskcla = taskcla
         self.linear=torch.nn.ModuleList()
@@ -117,15 +118,13 @@ class Renset32(nn.Module):
         out = self.layer3(out)
         out = self.avgpool(out)
         out = out.view(out.size(0),-1)
-        self.features = out
-        tempout = out/out.norm(dim=1).view(-1,1)
+        out = self.bnL(out)
         y=[]
         for t,i in self.taskcla:
-            y.append(self.linear[t](tempout))
-        # x = self.fc(x)
-        return y
+            y.append(self.linear[t](out))
+        return out,y
 
-    def linear_head(self,x):
+    def headClacify(self,x):
         y = []
         for t,i in self.taskcla:
             y.append(self.linear[t](x))
@@ -253,17 +252,84 @@ class Renset32(nn.Module):
         print('-'*30)
         return mat_final    
 
+
+class ResNet18(nn.Module):
+    def __init__(self,block,layers,taskcla,nf):
+        super(ResNet18,self).__init__()
+        self.inplanes = nf
+        self.conv1 = conv3x3(3,nf,1)
+        self.bn1 = nn.BatchNorm2d(nf)
+        self.relu = nn.ReLU(nf)
+        self.layer1 = self._make_layer(block,nf*1,layers[0],stride=1)
+        self.layer2 = self._make_layer(block,nf*2,layers[1],stride=2)
+        self.layer3 = self._make_layer(block,nf*4,layers[2],stride=2)
+        self.layer4 = self._make_layer(block,nf*8,layers[3],stride=2)
+        self.avg_pool = nn.AdaptiveAvgPool2d((1,1))
+        self.bnL = nn.BatchNorm1d(nf*8*4)
+
+        self.taskcla = taskcla
+        self.linear=torch.nn.ModuleList()
+        for t, n in taskcla:
+            self.linear.append(nn.Linear(nf*8 * block.expansion*4, n, bias=False))
+
+        self.features_num = nf*8*4
+        
+        for m in self.modules():
+            if isinstance(m,nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight,mode='fan_out',nonlinearity='relu')
+            elif isinstance(m,nn.BatchNorm2d):
+                nn.init.constant_(m.weight,1)
+                nn.init.constant_(m.bias,0)
+            elif isinstance(m,nn.Linear):
+                nn.init.orthogonal_(m.weight,gain=1)
+
+        self.act = OrderedDict()
+
+    
+    def _make_layer(self,block:BasicBlock,planes,blocks,stride=1):
+        downsample = None
+        if stride!=1 or  self.inplanes != planes*block.expansion:
+            downsample = nn.Sequential(
+                nn.Conv2d(self.inplanes,planes*block.expansion,kernel_size=1,stride=stride,bias=False),
+                nn.BatchNorm2d(planes*block.expansion)
+            )
+        pass
+        layers = []
+        layers.append(block(self.inplanes,planes*block.expansion,stride,downsample))
+        self.inplanes = planes*block.expansion
+
+        for i in range(1,blocks):
+            layers.append(block(self.inplanes,planes))
+        return nn.Sequential(*layers)
+    
+    def forward(self,x):
+        bsz = x.size(0)
+        self.act['conv_in'] = x.view(bsz,3,32,32)
+        out = self.relu(self.bn1(self.conv1(x)))
+
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+        out = F.avg_pool2d(out,2)
+        out = out.view(out.size(0),-1)
+        out  = self.bnL(out)
+
+        y=[]
+        for t,i in self.taskcla:
+            y.append(self.linear[t](out))
+        return out,y
+
+    def headClacify(self,features):
+        y = []
+        for t, i in self.taskcla:
+            y.append(self.linear[t](features))
+        return y
+        
+   
+
 def resenet3232(taskcla):
     return Renset32(BasicBlock,[5,5,5],taskcla)
 
-
-
-# x = torch.arange(64*32*32*3,dtype=torch.float32).reshape(64,3,32,32)
-# y = torch.arange(64)
-# from torch.utils.data import TensorDataset
-# net = resenet3232()
-# datasets = TensorDataset(x,y)
-# x = torch.arange(1*32*32*3,dtype=torch.float32).reshape(1,3,32,32)
-# net.get_representation_matrix_ResNet18('cpu',datasets)
-# net(x)
-# len(net.getActList())
+def resnet1818(taskcla,nf=32):
+    return ResNet18(BasicBlock,[2,2,2,2],taskcla,nf)

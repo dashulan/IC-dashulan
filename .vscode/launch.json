@@ -1,0 +1,29 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+                "--exp_name",
+                "temp_test",
+                "--network",
+                "resnet18",
+                "--nepochs",
+                "80",
+                "--batch_size",
+                "128",
+                "--momentum",
+                "0",
+                "--wd",
+                "0",
+            ]
+        }
+    ]
+}
